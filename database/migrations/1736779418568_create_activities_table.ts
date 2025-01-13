@@ -6,6 +6,15 @@ export default class extends BaseSchema {
   async up() {
     this.schema.createTable(this.tableName, (table) => {
       table.increments('id')
+      table.foreign('user_id').references('id').inTable('users').onDelete('CASCADE')
+      table.string('status').index()
+      table.string('description').nullable()
+      // morph activity
+      table.string('activity_type')
+      table.bigInteger('activity_id')
+      table.index(['activity_type', 'activity_id'])
+
+      table.json('meta').nullable()
 
       table.timestamp('created_at')
       table.timestamp('updated_at')
