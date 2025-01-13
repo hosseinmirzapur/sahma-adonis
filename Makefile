@@ -1,4 +1,7 @@
 dev:
 	@pnpm run dev;
 
-.PHONY: dev
+lint:
+	@pnpm run lint --fix;
+
+.PHONY: dev lint
