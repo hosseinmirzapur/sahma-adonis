@@ -1,7 +1,7 @@
 dev:
-	@pnpm run dev;
+	@bun run dev;
 
 lint:
-	@pnpm run lint --fix;
+	@bun run lint --fix;
 
 .PHONY: dev lint

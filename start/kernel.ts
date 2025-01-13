@@ -46,6 +46,16 @@ router.use([
  * the routes or the routes group.
  */
 export const middleware = router.named({
+  countOnlineUsers: () => import('#middleware/count_online_users_middleware'),
+  convertObfuscatedIdToFolderId: () =>
+    import('#middleware/convert_obfuscated_id_to_folder_id_middleware'),
+  convertObfuscatedIdToEntityGroupId: () =>
+    import('#middleware/convert_obfuscated_id_to_entity_group_id_middleware'),
+  checkUserManagementPermission: () =>
+    import('#middleware/check_user_management_permission_middleware'),
+  checkPermissionLetter: () => import('#middleware/check_permission_letter_middleware'),
+  checkFolderOrFileCreationOrDeletePermission: () =>
+    import('#middleware/check_folder_or_file_creation_or_delete_permission_middleware'),
   guest: () => import('#middleware/guest_middleware'),
   auth: () => import('#middleware/auth_middleware'),
 })
