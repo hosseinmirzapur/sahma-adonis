@@ -15,9 +15,7 @@ export default class extends BaseSchema {
       table.index(['activity_type', 'activity_id'])
 
       table.json('meta').nullable()
-
-      table.timestamp('created_at')
-      table.timestamp('updated_at')
+      table.timestamps()
     })
   }
 

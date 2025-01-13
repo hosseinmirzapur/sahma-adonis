@@ -5,10 +5,12 @@ export default class extends BaseSchema {
 
   async up() {
     this.schema.createTable(this.tableName, (table) => {
-      table.increments('id')
+      table.increments('id').primary()
+      table.foreign('entity_group_id').references('id').inTable('entity_groups').onDelete('CASCADE')
+      table.foreign('department_id').references('id').inTable('departments').onDelete('CASCADE')
+      table.unique(['entity_group_id', 'department_id'])
 
-      table.timestamp('created_at')
-      table.timestamp('updated_at')
+      table.timestamps()
     })
   }
 

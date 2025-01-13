@@ -16,8 +16,7 @@ export default class extends BaseSchema {
       table.string('remember_token', 100).nullable()
       table.foreign('created_by').references('id').inTable('users').onDelete('CASCADE')
 
-      table.timestamp('created_at')
-      table.timestamp('updated_at').nullable()
+      table.timestamps()
     })
   }
 
