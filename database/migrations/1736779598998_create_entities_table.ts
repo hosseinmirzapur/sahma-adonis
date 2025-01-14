@@ -7,7 +7,12 @@ export default class extends BaseSchema {
     this.schema.createTable(this.tableName, (table) => {
       table.increments('id').primary()
 
-      table.foreign('entity_group_id').references('id').inTable('entity_groups').nullable()
+      table
+        .foreign('entity_group_id')
+        .references('id')
+        .inTable('entity_groups')
+        .onDelete('CASCADE')
+        .nullable()
       table.string('type').index()
       table.text('transcription_result', 'longtext').nullable()
       table.string('file_location')

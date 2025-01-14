@@ -6,9 +6,12 @@ export default class extends BaseSchema {
   async up() {
     this.schema.createTable(this.tableName, (table) => {
       table.increments('id')
-
-      table.timestamp('created_at')
-      table.timestamp('updated_at')
+      table.foreign('letter_id').references('letters.id').onDelete('CASCADE')
+      table.foreign('user_id').references('users.id').onDelete('CASCADE')
+      table.foreign('recipient_id').references('users.id').onDelete('CASCADE').nullable()
+      table.string('text').index()
+      table.json('meta').nullable()
+      table.timestamps()
     })
   }
 

@@ -11,7 +11,7 @@ export default class extends BaseSchema {
       table.string('description').nullable()
       // morph activity
       table.string('activity_type')
-      table.bigInteger('activity_id')
+      table.bigInteger('activity_id').unsigned()
       table.index(['activity_type', 'activity_id'])
 
       table.json('meta').nullable()

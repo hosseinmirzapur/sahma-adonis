@@ -5,10 +5,14 @@ export default class extends BaseSchema {
 
   async up() {
     this.schema.createTable(this.tableName, (table) => {
-      table.increments('id')
+      table.increments('id').primary()
+      table.string('type').index()
+      table.string('file_location')
+      table.string('attachable_type')
+      table.bigInteger('attachable_id').unsigned()
+      table.json('meta').nullable()
 
-      table.timestamp('created_at')
-      table.timestamp('updated_at')
+      table.timestamps()
     })
   }
 
