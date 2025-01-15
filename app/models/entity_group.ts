@@ -111,7 +111,7 @@ export default class EntityGroup extends BaseModel {
       await entityGroup.useTransaction(trx).save()
 
       entityGroup.slug = entityGroup.getEntityGroupId()
-      return entityGroup
+      return await entityGroup.save()
     })
   }
 
