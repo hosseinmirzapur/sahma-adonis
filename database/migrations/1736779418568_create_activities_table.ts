@@ -5,8 +5,8 @@ export default class extends BaseSchema {
 
   async up() {
     this.schema.createTable(this.tableName, (table) => {
-      table.increments('id')
-      table.foreign('user_id').references('id').inTable('users').onDelete('CASCADE')
+      table.increments('id').primary()
+      table.foreign('user_id').references('users.id').onDelete('CASCADE')
       table.string('status').index()
       table.string('description').nullable()
       // morph activity
