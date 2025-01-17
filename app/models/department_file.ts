@@ -14,6 +14,12 @@ export default class DepartmentFile extends BaseModel {
   @column.dateTime({ autoCreate: true, autoUpdate: true })
   declare updatedAt: DateTime
 
+  @column()
+  declare department_id: number
+
+  @column()
+  declare entity_group_id: number
+
   @belongsTo(() => EntityGroup)
   declare entityGroup: BelongsTo<typeof EntityGroup>
 

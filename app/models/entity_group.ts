@@ -36,6 +36,12 @@ export default class EntityGroup extends BaseModel {
   @column.dateTime({ autoCreate: true, autoUpdate: true })
   declare updatedAt: DateTime
 
+  @column.dateTime()
+  declare deleted_at: DateTime | null
+
+  @column()
+  declare deleted_by: number | null
+
   @column()
   declare slug: string
 
