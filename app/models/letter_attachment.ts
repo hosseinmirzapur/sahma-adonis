@@ -10,4 +10,13 @@ export default class LetterAttachment extends BaseModel {
 
   @column.dateTime({ autoCreate: true, autoUpdate: true })
   declare updatedAt: DateTime
+
+  @column()
+  declare meta: any
+
+  @column()
+  declare type: string
+
+  @column()
+  declare file_location: string
 }
