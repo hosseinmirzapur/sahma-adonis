@@ -66,6 +66,12 @@ export default class EntityGroup extends BaseModel {
   @column()
   declare status: string
 
+  @column()
+  declare description: string | null
+
+  @column()
+  declare parent_folder_id: number | null
+
   @belongsTo(() => User)
   declare user: BelongsTo<typeof User>
 
@@ -78,8 +84,10 @@ export default class EntityGroup extends BaseModel {
   })
   declare activities: HasMany<typeof Activity>
 
-  @belongsTo(() => Folder)
-  declare folder: BelongsTo<typeof Folder>
+  @belongsTo(() => Folder, {
+    foreignKey: 'parent_folder_id',
+  })
+  declare parentFolder: BelongsTo<typeof Folder>
 
   static textSearch = scope((query, text: string) => {
     // ILike is case-insensitiive search

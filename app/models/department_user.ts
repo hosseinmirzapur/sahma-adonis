@@ -14,6 +14,9 @@ export default class DepartmentUser extends BaseModel {
   @column.dateTime({ autoCreate: true, autoUpdate: true })
   declare updatedAt: DateTime
 
+  @column()
+  declare department_id: number
+
   @belongsTo(() => User)
   declare user: BelongsTo<typeof User>
 
