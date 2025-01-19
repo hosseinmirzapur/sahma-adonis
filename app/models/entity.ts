@@ -17,7 +17,7 @@ export default class Entity extends BaseModel {
   declare updatedAt: DateTime
 
   @column()
-  declare meta: any
+  declare meta: Record<string, any>
 
   @column()
   declare result_location: any

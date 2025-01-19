@@ -15,7 +15,7 @@ export default class LetterInbox extends BaseModel {
   declare updatedAt: DateTime
 
   @column()
-  declare meta: any
+  declare meta: Record<string, any>
 
   @belongsTo(() => User, {
     foreignKey: 'user_id',

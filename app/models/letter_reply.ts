@@ -16,7 +16,7 @@ export default class LetterReply extends BaseModel {
   declare updatedAt: DateTime
 
   @column()
-  declare meta: any
+  declare meta: Record<string, any>
 
   @belongsTo(() => Letter)
   declare letter: BelongsTo<typeof Letter>
@@ -24,6 +24,11 @@ export default class LetterReply extends BaseModel {
   @belongsTo(() => User)
   declare user: BelongsTo<typeof User>
 
-  @hasMany(() => LetterAttachment)
+  @hasMany(() => LetterAttachment, {
+    foreignKey: 'attachble_id',
+    onQuery(query) {
+      query.where('attachble_type', 'LetterReply')
+    },
+  })
   declare attachments: HasMany<typeof LetterAttachment>
 }

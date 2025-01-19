@@ -55,7 +55,7 @@ export default class EntityGroup extends BaseModel {
   declare transcription_result: string
 
   @column()
-  declare meta: any
+  declare meta: Record<string, any>
 
   @column()
   declare name: string
