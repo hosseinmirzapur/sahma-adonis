@@ -10,7 +10,7 @@ import logger from '@adonisjs/core/services/logger'
 import DepartmentFile from '#models/department_file'
 import drive from '@adonisjs/drive/services/main'
 import { Exception } from '@adonisjs/core/exceptions'
-import app from '@adonisjs/core/services/app'
+import FileSystemHelper from '#helper/filesystem_helper'
 
 export default class Folder extends BaseModel {
   @column({ isPrimary: true })
@@ -24,6 +24,9 @@ export default class Folder extends BaseModel {
 
   @column.dateTime()
   declare deleted_at: DateTime | null
+
+  @column.dateTime()
+  declare archived_at: DateTime | null
 
   @column()
   declare slug: string
@@ -258,9 +261,9 @@ export default class Folder extends BaseModel {
 
     folders.map(async (folder) => {
       const newDir = `${currentDirectory}/${folder.name}`
-      app.makePath(newDir)
+      const absPath = FileSystemHelper.makeDirectory('zip', newDir)
 
-      await folder.retrieveSubFoldersAndFilesForDownload(newDir)
+      await folder.retrieveSubFoldersAndFilesForDownload(absPath)
     })
   }
 }

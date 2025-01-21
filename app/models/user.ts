@@ -20,6 +20,12 @@ export default class User extends BaseModel {
   @column.dateTime({ autoCreate: true, autoUpdate: true })
   declare updatedAt: DateTime
 
+  @column()
+  declare name: string | null
+
+  @column()
+  declare personal_id: string | number | null
+
   @column({
     serializeAs: null,
   })

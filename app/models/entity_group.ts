@@ -39,6 +39,9 @@ export default class EntityGroup extends BaseModel {
   @column.dateTime()
   declare deleted_at: DateTime | null
 
+  @column.dateTime()
+  declare archived_at: DateTime | null
+
   @column()
   declare deleted_by: number | null
 
