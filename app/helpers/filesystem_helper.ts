@@ -41,4 +41,8 @@ export default class FileSystemHelper {
 
     await archive.finalize()
   }
+
+  public static fileExtension(filename: string): string {
+    return filename.split('.').pop() || ''
+  }
 }

@@ -70,6 +70,9 @@ export default class EntityGroup extends BaseModel {
   declare status: string
 
   @column()
+  declare user_id: string | number
+
+  @column()
   declare description: string | null
 
   @column()
