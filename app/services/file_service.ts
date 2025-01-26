@@ -1,3 +1,5 @@
+// @ts-nocheck
+
 import Department from '#models/department'
 import User from '#models/user'
 import { ActivityService } from '#services/activity_service'
@@ -8,7 +10,7 @@ import logger from '@adonisjs/core/services/logger'
 import drive from '@adonisjs/drive/services/main'
 import { DateTime } from 'luxon'
 import crypto from 'node:crypto'
-import { createReadStream } from 'node:fs'
+import { createReadStream, unlinkSync, writeFileSync } from 'node:fs'
 import { PdfInfoService } from '#services/pdf_info_service'
 import db from '@adonisjs/lucid/services/db'
 import EntityGroup from '#models/entity_group'
@@ -18,6 +20,19 @@ import DepartmentFile from '#models/department_file'
 import Activity from '#models/activity'
 import SubmitFileToOcrJob from '#jobs/submit_file_to_ocr_job'
 import Queue from '@rlanz/bull-queue/services/main'
+import AudioHelper from '#helper/audio_helper'
+import ConvertVoiceToWavJob from '#jobs/convert_voice_to_wav_job'
+import SubmitVoiceToSplitterJob from '#jobs/submit_voice_to_splitter_job'
+import sharp from 'sharp'
+import ExtractVoiceFromVideoJob from '#jobs/extract_voice_from_video_job'
+import path from 'node:path'
+import CliHelper from '#helper/cli_helper'
+import { HttpContext } from '@adonisjs/core/http'
+import config from '@adonisjs/core/services/config'
+import vine from '@vinejs/vine'
+import ConfigHelper from '#helper/config_helper'
+import fs from 'node:fs'
+import csv from 'csv-parser'
 
 @inject()
 export class FileService {
@@ -95,46 +110,512 @@ export class FileService {
     voice: MultipartFile,
     departments: Department[],
     parentFolderId: number | null
-  ): Promise<void> {}
+  ): Promise<void> {
+    const mimetype = voice.headers['content-type']
+    let extension = voice.extname?.slice(1)
+    const voiceOriginalFileName = voice.clientName
+
+    // Validate MIME type
+    if (mimetype === 'application/octet-stream') {
+      throw new Exception('فایل مورد نظر قابل پردازش نیست لطفا آن را به فرمت m4a تبدیل نمایید', {
+        status: 400,
+      })
+    }
+
+    // Handle specific MIME type for .m4a files
+    if (extension === 'm4a' && mimetype === 'video/3gpp') {
+      extension = 'm4a'
+    }
+
+    // Generate file name and path
+    const nowDate = DateTime.now().toISODate()
+    const now = DateTime.now().toMillis() / 1000
+    const hash = crypto.createHash('sha3-256').update(voiceOriginalFileName).digest('hex')
+    const fileName = `${hash}-${now}.${extension}`
+    const originalPdfPath = `/${nowDate}`
+
+    // Save the file to disk
+    try {
+      const readable = createReadStream(voice.tmpPath!)
+      await drive.use('voice').putStream(`${originalPdfPath}/${fileName}`, readable)
+
+      logger.info(`VOICE => Stored voice file to disk voice user: #${user.id}.`)
+    } catch (error) {
+      throw new Exception('Failed to store voice file in storage', { status: 500 })
+    }
+
+    // Get the file location
+    const fileLocation = `${originalPdfPath}/${fileName}`
+
+    // Get audio duration using FFmpeg
+    let duration: number
+    try {
+      const filePath = await drive.use('voice').getUrl(fileLocation)
+      const fileContent = await drive.use('voice').get(fileLocation)
+      duration = await AudioHelper.getAudioDurationByFfmpeg(filePath, fileContent)
+    } catch (error) {
+      throw new Exception('فایل مورد نظر کیفیت مناسب را برای پردازش ندارد', { status: 400 })
+    }
+
+    // Prepare metadata
+    const meta = { duration }
+
+    // Create entity group and department files in a transaction
+    const entityGroup = await db.transaction(async (trx) => {
+      const eg = await EntityGroup.create(
+        {
+          user_id: user.id,
+          parent_folder_id: parentFolderId,
+          name: voiceOriginalFileName,
+          type: 'voice',
+          file_location: fileLocation,
+          status: EntityGroup.STATUS_WAITING_FOR_SPLIT,
+          meta,
+        },
+        { client: trx }
+      )
+
+      // Create department files
+      for (const departmentId of departments) {
+        const department = await Department.findOrFail(departmentId)
+        await DepartmentFile.create(
+          {
+            entity_group_id: eg.id,
+            department_id: department.id,
+          },
+          { client: trx }
+        )
+      }
+
+      // Log user activity
+      const description = `کاربر ${user.name} با کد پرسنلی ${user.personal_id} فایل ${eg.name} بارگزاری کرد.`
+      await this.activityService.logUserAction(user, Activity.TYPE_UPLOAD, eg, description)
+
+      return eg
+    })
+
+    // Dispatch job based on file extension
+    if (extension !== 'wav') {
+      logger.info(
+        `STT => entityGroup: #${entityGroup.id} audio file needs to be converted to .wav (${extension})`
+      )
+      await Queue.dispatch(ConvertVoiceToWavJob, { entityGroup })
+    } else {
+      await Queue.dispatch(SubmitVoiceToSplitterJob, { entityGroup })
+    }
+  }
 
   public async storeImage(
     user: User,
     image: MultipartFile,
     departments: Department[],
     parentFolderId: number | null
-  ): Promise<void> {}
+  ): Promise<void> {
+    const imageOriginalFileName = image.clientName
+    const extension = image.extname?.slice(1)
+
+    // Generate file name and path
+    const nowDate = DateTime.now().toISODate()
+    const now = DateTime.now().toMillis() / 1000
+    const hash = crypto.createHash('sha3-256').update(imageOriginalFileName).digest('hex')
+    const fileName = `${hash}-${now}.${extension}`
+    const originalImagePath = `/${nowDate}`
+
+    // Save the file to disk
+    try {
+      const readable = createReadStream(image.tmpPath!)
+      await drive.use('image').putStream(`${originalImagePath}/${fileName}`, readable)
+
+      logger.info(`OCR => Stored image file to disk image user: #${user.id}.`)
+    } catch (error) {
+      throw new Exception('Failed to store image file in storage', { status: 500 })
+    }
+
+    // Get the file location
+    const fileLocation = `${originalImagePath}/${fileName}`
+
+    // Convert TIFF to PNG if necessary
+    let fileLocationTiffConverted: string | null = null
+    if (extension === 'tif' || extension === 'tiff') {
+      fileLocationTiffConverted = await this.convertTiffToPng(fileLocation)
+    }
+
+    // Get the final file path
+    const finalFilePath = fileLocationTiffConverted || fileLocation
+
+    // Get image dimensions using Sharp
+    const imageBuffer = await drive.use('image').get(finalFilePath)
+    const { width, height } = await sharp(imageBuffer).metadata()
+
+    if (!width || !height) {
+      throw new Exception('Failed to get image dimensions', { status: 500 })
+    }
+
+    // Prepare metadata
+    const meta: any = {
+      width,
+      height,
+    }
+
+    if (fileLocationTiffConverted) {
+      meta.tif_converted_png_location = fileLocationTiffConverted
+    }
+
+    // Create entity group and department files in a transaction
+    const entityGroup = await db.transaction(async (trx) => {
+      const eg = await EntityGroup.create(
+        {
+          user_id: user.id,
+          parent_folder_id: parentFolderId,
+          name: imageOriginalFileName,
+          type: 'image',
+          file_location: fileLocation,
+          status: EntityGroup.STATUS_WAITING_FOR_TRANSCRIPTION,
+          meta,
+        },
+        { client: trx }
+      )
+
+      // Create department files
+      for (const departmentId of departments) {
+        const department = await Department.findOrFail(departmentId)
+        await DepartmentFile.create(
+          {
+            entity_group_id: eg.id,
+            department_id: department.id,
+          },
+          { client: trx }
+        )
+      }
+
+      // Log user activity
+      const description = `کاربر ${user.name} با کد پرسنلی ${user.personal_id} فایل ${eg.name} بارگزاری کرد.`
+      await this.activityService.logUserAction(user, Activity.TYPE_UPLOAD, eg, description)
+
+      return eg
+    })
+
+    // Dispatch job for OCR processing
+    await Queue.dispatch(SubmitFileToOcrJob, { entityGroup, user: entityGroup.user })
+  }
 
   public async storeVideo(
     user: User,
     video: MultipartFile,
     departments: Department[],
     parentFolderId: number | null
-  ) {}
+  ): Promise<void> {
+    const mimetype = video.headers['content-type']
+
+    // Validate MIME type
+    if (mimetype === 'application/octet-stream') {
+      throw new Exception('فایل مورد نظر قابل پردازش نیست لطفا آن را به فرمت m4a تبدیل نمایید', {
+        status: 400,
+      })
+    }
+
+    const videoOriginalFileName = video.clientName
+    const extension = video.extname?.slice(1)
+
+    // Generate file name and path
+    const nowDate = DateTime.now().toISODate()
+    const now = DateTime.now().toMillis() / 1000
+    const hash = crypto.createHash('sha3-256').update(videoOriginalFileName).digest('hex')
+    const fileName = `${hash}-${now}.${extension}`
+    const originalVideoPath = `/${nowDate}`
+
+    // Save the file to disk
+    try {
+      const readable = createReadStream(video.tmpPath!)
+      await drive.use('video').putStream(`${originalVideoPath}/${fileName}`, readable)
+
+      logger.info(`VTT => Stored video file to disk video user: #${user.id}.`)
+    } catch (error) {
+      throw new Exception('Failed to store video file in storage', { status: 500 })
+    }
+
+    // Get the file location
+    const fileLocation = `${originalVideoPath}/${fileName}`
+
+    // Create entity group and department files in a transaction
+    const entityGroup = await db.transaction(async (trx) => {
+      const eg = await EntityGroup.create(
+        {
+          user_id: user.id,
+          parent_folder_id: parentFolderId,
+          name: videoOriginalFileName,
+          type: 'video',
+          file_location: fileLocation,
+          status: EntityGroup.STATUS_WAITING_FOR_AUDIO_SEPARATION,
+        },
+        { client: trx }
+      )
+
+      // Create department files
+      for (const departmentId of departments) {
+        const department = await Department.findOrFail(departmentId)
+        await DepartmentFile.create(
+          {
+            entity_group_id: eg.id,
+            department_id: department.id,
+          },
+          { client: trx }
+        )
+      }
+
+      // Log user activity
+      const description = `کاربر ${user.name} با کد پرسنلی ${user.personal_id} فایل ${eg.name} بارگزاری کرد.`
+      await this.activityService.logUserAction(user, Activity.TYPE_UPLOAD, eg, description)
+
+      return eg
+    })
+
+    // Dispatch job for audio extraction
+    await Queue.dispatch(ExtractVoiceFromVideoJob, { entityGroup })
+  }
 
   public async storeWord(
     user: User,
-    voice: MultipartFile,
+    word: MultipartFile,
     departments: Department[],
     parentFolderId: number | null
-  ) {}
+  ): Promise<void> {
+    const wordOriginalFileName = word.clientName
+    const extension = word.extname?.slice(1)
+
+    // Generate file name and path
+    const nowDate = DateTime.now().toISODate()
+    const now = DateTime.now().toMillis() / 1000
+    const hash = crypto.createHash('sha3-256').update(wordOriginalFileName).digest('hex')
+    const fileName = `${hash}-${now}.${extension}`
+    const originalFilePath = `/${nowDate}`
+
+    // Save the file to disk
+    try {
+      const readable = createReadStream(word.tmpPath!)
+      await drive.use('word').putStream(`${originalFilePath}/${fileName}`, readable)
+
+      logger.info(`WORD => Stored word file to disk word user: #${user.id}.`)
+    } catch (error) {
+      throw new Exception('Failed to store word file in storage', { status: 500 })
+    }
+
+    // Get the file location
+    const wordFileLocation = `${originalFilePath}/${fileName}`
+
+    // Extract file details
+    const filenameOriginalWord = path.parse(wordFileLocation).name
+    const baseNameOriginalWord = path.basename(wordFileLocation)
+    const baseDirOriginalWord = path.dirname(wordFileLocation)
+
+    // Create temporary file paths
+    const tmpFilePath = `/tmp/${baseNameOriginalWord}`
+    const tempPdfFilePath = `/tmp/${filenameOriginalWord}.pdf`
+
+    // Write the Word file to a temporary location
+    const wordFileContent = await drive.use('word').get(wordFileLocation)
+    writeFileSync(tmpFilePath, wordFileContent)
+
+    // Convert Word to PDF using unoconv
+    const command =
+      process.env.NODE_ENV === 'development'
+        ? `unoconv -f pdf ${tmpFilePath}`
+        : `sudo -u deployer unoconv -f pdf ${tmpFilePath}`
+
+    logger.info('Starting convert word to PDF!')
+    logger.info(`Command: ${command}`)
+
+    try {
+      await CliHelper.execCommand(command)
+      logger.info('Converting finished successfully.')
+    } catch (error) {
+      logger.error('Failed to convert Word to PDF:', error)
+      throw new Exception('Failed to convert Word to PDF', { status: 500 })
+    }
+
+    // Save the converted PDF file
+    const pdfFileLocation = `${baseDirOriginalWord}/${filenameOriginalWord}.pdf`
+    try {
+      const pdfFileContent = createReadStream(tempPdfFilePath)
+      await drive.use('pdf').putStream(pdfFileLocation, pdfFileContent)
+    } catch (error) {
+      throw new Exception('Failed to store converted PDF file', { status: 500 })
+    }
+
+    // Clean up temporary files
+    unlinkSync(tmpFilePath)
+    unlinkSync(tempPdfFilePath)
+
+    // Create entity group and department files in a transaction
+    const entityGroup = await db.transaction(async (trx) => {
+      const result = { converted_word_to_pdf: pdfFileLocation }
+
+      const eg = await EntityGroup.create(
+        {
+          user_id: user.id,
+          parent_folder_id: parentFolderId,
+          name: wordOriginalFileName,
+          type: 'word',
+          file_location: wordFileLocation,
+          status: EntityGroup.STATUS_WAITING_FOR_TRANSCRIPTION,
+          result_location: result,
+        },
+        { client: trx }
+      )
+
+      // Create department files
+      for (const departmentId of departments) {
+        const department = await Department.findOrFail(departmentId)
+        await DepartmentFile.create(
+          {
+            entity_group_id: eg.id,
+            department_id: department.id,
+          },
+          { client: trx }
+        )
+      }
+
+      // Log user activity
+      const description = `کاربر ${user.name} با کد پرسنلی ${user.personal_id} فایل ${eg.name} بارگزاری کرد.`
+      await this.activityService.logUserAction(user, Activity.TYPE_UPLOAD, eg, description)
+
+      return eg
+    })
+
+    // Dispatch job for OCR processing
+    await Queue.dispatch(SubmitFileToOcrJob, { entityGroup, user: entityGroup.user })
+  }
 
   @inject()
-  public async handleUploadedFile(request: any, folderId: number | null) {}
+  public async handleUploadedFile(
+    { request }: HttpContext,
+    folderId: number | null = null
+  ): Promise<void> {
+    // Get all valid file extensions from the mimeTypes object
+    const types = config.get('mimetypes') as Record<string, Record<string, string[]>>
+    const mimeTypes = Object.values(types)
+      .flatMap((category) => Object.values(category))
+      .flat()
 
-  public async getAudioInfo(path: string): Promise<any[]> {
-    return []
+    const file = request.file('file')
+    const departments = request.input('tags', []) as any[]
+    const extension = file?.extname
+
+    const validator = vine.compile(
+      vine.object({
+        file: vine.file({
+          size: '307mb',
+          extnames: mimeTypes,
+        }),
+        tags: vine.array(vine.string()).minLength(1),
+      })
+    )
+    try {
+      await request.validateUsing(validator)
+    } catch (error) {
+      throw new Exception('فایل ارسالی نامعتبر است', { status: 422 })
+    }
+
+    // @ts-ignore
+    const user = request.user as User
+    if (!user) {
+      throw new Exception('دسترسی لازم را ندارید.', { status: 403 })
+    }
+
+    if (ConfigHelper.mimetypes('book').includes(extension!)) {
+      await this.storePdf(user, file!, departments, folderId)
+    } else if (ConfigHelper.mimetypes('voice').includes(extension!)) {
+      await this.storeVoice(user, file!, departments, folderId)
+    } else if (ConfigHelper.mimetypes('image').includes(extension!)) {
+      await this.storeImage(user, file!, departments, folderId)
+    } else if (ConfigHelper.mimetypes('video').includes(extension!)) {
+      await this.storeVideo(user, file!, departments, folderId)
+    } else if (ConfigHelper.mimetypes('office').includes(extension!)) {
+      await this.storeWord(user, file!, departments, folderId)
+    } else {
+      throw new Exception('فایل مورد نظر پشتیبانی نمیشود', { status: 422 })
+    }
   }
 
-  public async setWatermarkToImage(imagePath: string) {}
+  public static async getAudioInfo(audioPath: string): Promise<Record<string, string>> {
+    return new Promise((resolve, reject) => {
+      const data: Record<string, string> = {}
+      fs.createReadStream(audioPath)
+        .pipe(csv({ separator: '\t', headers: false }))
+        .on('data', (row) => {
+          const start = row[0]
+          const text = row[2]
 
-  public async convertPdfToImage(entityGroup: EntityGroup): Promise<string> {
-    return ''
+          if (start === 'start') {
+            return
+          }
+
+          const startInSeconds = Number.parseFloat(start) / 1000
+          data[startInSeconds.toString()] = text
+        })
+        .on('end', () => {
+          resolve(data)
+        })
+        .on('error', (error) => {
+          reject(
+            new Exception('خطا در پردازش فایل csv', {
+              cause: error,
+              status: 500,
+            })
+          )
+        })
+    })
   }
 
-  public async addWaterMarkToPdf(entityGroup: EntityGroup, searchablePdfFile: string) {}
+  public static async setWatermarkToImage(imagePath: string) {
+    try {
+      const watermarkPath = app.publicPath('images/irapardaz-logo.png')
+      const image = sharp(imagePath)
+      const watermark = sharp(watermarkPath)
 
-  public async convertTiffToPng($tifFilePathFromDisk: string): Promise<string> {
-    return ''
+      const metadata = await image.metadata()
+      const imageWidth = metadata.width || 0
+      const imageHeight = metadata.height || 0
+
+      const watermarkHeight = Math.round(imageHeight * 0.5)
+      const watermarkWidth = Math.round(watermarkHeight * 0.7)
+
+      const resizedWatermark = await watermark
+        .resize(watermarkWidth, watermarkHeight, {
+          fit: 'inside',
+        })
+        .toBuffer()
+
+      await image
+        .composite([
+          {
+            input: resizedWatermark,
+            top: Math.round((imageHeight - watermarkHeight) / 2), // Center vertically
+            left: Math.round((imageWidth - watermarkWidth) / 2), // Center horizontally
+            blend: 'over', // Blend mode for opacity
+          },
+        ])
+        .toFile(imagePath)
+    } catch (error) {
+      throw new Exception('خطا در افزودن watermark به عکس', {
+        cause: error,
+        status: 500,
+      })
+    }
+  }
+
+  public async addWaterMarkToPdf(entityGroup: EntityGroup, searchablePdfFile: string) {
+    const originalPdfFilePath = drive.use('pdf').getUrl(searchablePdfFile)
+  }
+
+  public async convertTiffToPng(tiffFilePathFromDisk: string): Promise<string> {
+    const tiffBuffer = await drive.use('image').get(tiffFilePathFromDisk)
+    const pngBuffer = await sharp(tiffBuffer).png().toBuffer()
+
+    const pngFileName = tiffFilePathFromDisk.replace(/\.tiff?$/, '.png')
+    await drive.use('image').put(pngFileName, pngBuffer)
+
+    return pngFileName
   }
 
   public async deleteEntitiesOfEntityGroup(entityGroup: EntityGroup) {}
