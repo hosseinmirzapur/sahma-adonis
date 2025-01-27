@@ -17,6 +17,12 @@ export default class LetterInbox extends BaseModel {
   @column()
   declare meta: Record<string, any>
 
+  @column()
+  declare user_id: number
+
+  @column()
+  declare letter_id: number
+
   @belongsTo(() => User, {
     foreignKey: 'user_id',
   })

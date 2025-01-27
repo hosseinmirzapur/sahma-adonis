@@ -14,6 +14,12 @@ export default class LetterSign extends BaseModel {
   @column.dateTime({ autoCreate: true, autoUpdate: true })
   declare updatedAt: DateTime
 
+  @column()
+  declare letter_id: number
+
+  @column()
+  declare user_id: number
+
   @belongsTo(() => Letter)
   declare letter: BelongsTo<typeof Letter>
 

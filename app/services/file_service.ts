@@ -7,7 +7,6 @@ import { Exception } from '@adonisjs/core/exceptions'
 import logger from '@adonisjs/core/services/logger'
 import drive from '@adonisjs/drive/services/main'
 import { DateTime } from 'luxon'
-import crypto from 'node:crypto'
 import { createReadStream, unlinkSync, writeFileSync } from 'node:fs'
 import { PdfInfoService } from '#services/pdf_info_service'
 import db from '@adonisjs/lucid/services/db'
@@ -49,7 +48,7 @@ export class FileService {
 
     const nowDate = DateTime.now().toISODate()
     const now = DateTime.now().toMillis() / 1000
-    const hash = crypto.createHash('sha3-256').update(pdf.clientName).digest('hex')
+    const hash = StringHelper.hashWithAlgo('sha3-256', pdf.clientName)
     const fileName = `${hash}-${now}-${extension}`
     const originalPdfPath = `/${nowDate}`
 
@@ -130,7 +129,7 @@ export class FileService {
     // Generate file name and path
     const nowDate = DateTime.now().toISODate()
     const now = DateTime.now().toMillis() / 1000
-    const hash = crypto.createHash('sha3-256').update(voiceOriginalFileName).digest('hex')
+    const hash = StringHelper.hashWithAlgo('sha3-256', voice.clientName)
     const fileName = `${hash}-${now}.${extension}`
     const originalPdfPath = `/${nowDate}`
 
@@ -217,7 +216,7 @@ export class FileService {
     // Generate file name and path
     const nowDate = DateTime.now().toISODate()
     const now = DateTime.now().toMillis() / 1000
-    const hash = crypto.createHash('sha3-256').update(imageOriginalFileName).digest('hex')
+    const hash = StringHelper.hashWithAlgo('sha3-256', image.clientName)
     const fileName = `${hash}-${now}.${extension}`
     const originalImagePath = `/${nowDate}`
 
@@ -320,7 +319,7 @@ export class FileService {
     // Generate file name and path
     const nowDate = DateTime.now().toISODate()
     const now = DateTime.now().toMillis() / 1000
-    const hash = crypto.createHash('sha3-256').update(videoOriginalFileName).digest('hex')
+    const hash = StringHelper.hashWithAlgo('sha3-256', video.clientName)
     const fileName = `${hash}-${now}.${extension}`
     const originalVideoPath = `/${nowDate}`
 
@@ -386,7 +385,7 @@ export class FileService {
     // Generate file name and path
     const nowDate = DateTime.now().toISODate()
     const now = DateTime.now().toMillis() / 1000
-    const hash = crypto.createHash('sha3-256').update(wordOriginalFileName).digest('hex')
+    const hash = StringHelper.hashWithAlgo('sha3-256', word.clientName)
     const fileName = `${hash}-${now}.${extension}`
     const originalFilePath = `/${nowDate}`
 

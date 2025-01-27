@@ -1,5 +1,8 @@
 import { DateTime } from 'luxon'
-import { BaseModel, column } from '@adonisjs/lucid/orm'
+import { BaseModel, belongsTo, column } from '@adonisjs/lucid/orm'
+import type { BelongsTo } from '@adonisjs/lucid/types/relations'
+import LetterReply from '#models/letter_reply'
+import Letter from '#models/letter'
 
 export default class LetterAttachment extends BaseModel {
   @column({ isPrimary: true })
@@ -19,4 +22,9 @@ export default class LetterAttachment extends BaseModel {
 
   @column()
   declare file_location: string
+
+  @belongsTo(() => BaseModel, {
+    foreignKey: 'attachable_id',
+  })
+  declare attachable: BelongsTo<typeof LetterReply | typeof Letter>
 }
