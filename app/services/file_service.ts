@@ -1,5 +1,3 @@
-// @ts-nocheck
-
 import Department from '#models/department'
 import User from '#models/user'
 import { ActivityService } from '#services/activity_service'
@@ -25,7 +23,7 @@ import ConvertVoiceToWavJob from '#jobs/convert_voice_to_wav_job'
 import SubmitVoiceToSplitterJob from '#jobs/submit_voice_to_splitter_job'
 import sharp from 'sharp'
 import ExtractVoiceFromVideoJob from '#jobs/extract_voice_from_video_job'
-import path from 'node:path'
+import path, { dirname } from 'node:path'
 import CliHelper from '#helper/cli_helper'
 import { HttpContext } from '@adonisjs/core/http'
 import config from '@adonisjs/core/services/config'
@@ -33,6 +31,8 @@ import vine from '@vinejs/vine'
 import ConfigHelper from '#helper/config_helper'
 import fs from 'node:fs'
 import csv from 'csv-parser'
+import StringHelper from '#helper/string_helpers'
+import Entity from '#models/entity'
 
 @inject()
 export class FileService {
@@ -417,6 +417,7 @@ export class FileService {
     writeFileSync(tmpFilePath, wordFileContent)
 
     // Convert Word to PDF using unoconv
+    // unoconv should be installed locally on the server
     const command =
       process.env.NODE_ENV === 'development'
         ? `unoconv -f pdf ${tmpFilePath}`
@@ -605,20 +606,134 @@ export class FileService {
   }
 
   public async addWaterMarkToPdf(entityGroup: EntityGroup, searchablePdfFile: string) {
-    const originalPdfFilePath = drive.use('pdf').getUrl(searchablePdfFile)
+    const originalPdfFilePath = FileSystemHelper.path('pdf', searchablePdfFile)
+    const convertedImagesDirAbsolute = `${dirname(entityGroup.file_location)}/pdf-watermarked-images-${entityGroup.id}`
+    const convertedImagesDir = FileSystemHelper.makeDirectory('image', convertedImagesDirAbsolute)
+
+    // pdftoppm should be installed locally on the server
+    const command = `pdftoppm -png ${originalPdfFilePath} ${convertedImagesDir}/converted 2>&1`
+    logger.info(command)
+    try {
+      logger.info(`ITT => Starting extract images to pdf`)
+      await CliHelper.execCommand(command)
+      logger.info(`ITT => Extract pages of pdf finished. Output: ${CliHelper.getOutput()}`)
+    } catch (error) {
+      throw new Exception(`ITT => Return value of pdftoppm is ${CliHelper.getOutput()}`)
+    }
+
+    // check if job has been done successfully
+    const pics: string[] = []
+    const files = fs.readdirSync(convertedImagesDir)
+    files.forEach(async (file) => {
+      const explodedFilename = file.split('.')
+      if (
+        file !== '.' &&
+        file !== '..' &&
+        explodedFilename[explodedFilename.length - 1] === 'png'
+      ) {
+        logger.info('ITT => Starting watermark image')
+        await FileService.setWatermarkToImage(`${convertedImagesDir}/${file}`)
+        logger.info('ITT => Watermark image finished')
+        pics.push(file)
+      }
+    })
+
+    pics.sort()
+
+    // list all PNG files in the directory
+    const imageFiles = fs
+      .readdirSync(convertedImagesDir)
+      .filter((file) => path.extname(file).toLowerCase() === '.png')
+    logger.info(`${convertedImagesDir}`)
+
+    if (imageFiles.length === 0) {
+      throw new Exception('no images exist', { status: 422 })
+    }
+
+    const convertedWatermarkedImagesDirAbsolute = `${FileSystemHelper.path('pdf', entityGroup.file_location)}/pdf-watermarked-${entityGroup.id}-${DateTime.now().millisecond / 1000}.pdf`
+    const watermarkPdfPath = FileSystemHelper.path('pdf', convertedWatermarkedImagesDirAbsolute)
+
+    // todo: use `img2pdf` utility command
+    const command2 = `img2pdf ${convertedImagesDir}/*.png -o ${watermarkPdfPath}`
+    logger.info(command2)
+    try {
+      logger.info(`ITT => Starting convert images to pdf`)
+      await CliHelper.execCommand(command2)
+      logger.info(`ITT => Convert images to pdf finished. Output: ${CliHelper.getOutput()}`)
+    } catch (error) {
+      throw new Exception(`ITT => Return value of img2pdf is ${CliHelper.getOutput()}`)
+    }
+
+    await drive.use('image').deleteAll(convertedWatermarkedImagesDirAbsolute)
+
+    return convertedWatermarkedImagesDirAbsolute
   }
 
   public async convertTiffToPng(tiffFilePathFromDisk: string): Promise<string> {
-    const tiffBuffer = await drive.use('image').get(tiffFilePathFromDisk)
-    const pngBuffer = await sharp(tiffBuffer).png().toBuffer()
+    const tiffFilePathFromRoot = FileSystemHelper.path('image', tiffFilePathFromDisk)
+    const pngFilePathFromDisk = `${tiffFilePathFromRoot}/${StringHelper.uniqid('tiff-converted-')}.png`
+    const pngFilePathFromRoot = FileSystemHelper.path('image', pngFilePathFromDisk)
+    const command = `convert ${tiffFilePathFromRoot} ${pngFilePathFromRoot}`
+    logger.info(command)
+    try {
+      await CliHelper.execCommand(command)
+      logger.info(`ITT => Convert tiff to png finished. Output: ${CliHelper.getOutput()}`)
+    } catch (error) {
+      logger.info(`ITT => Return value of convert is ${CliHelper.getOutput()}`)
+      throw new Exception('Failed to convert tiff to png', { status: 500 })
+    }
 
-    const pngFileName = tiffFilePathFromDisk.replace(/\.tiff?$/, '.png')
-    await drive.use('image').put(pngFileName, pngBuffer)
-
-    return pngFileName
+    return pngFilePathFromDisk
   }
 
-  public async deleteEntitiesOfEntityGroup(entityGroup: EntityGroup) {}
+  public async deleteEntitiesOfEntityGroup(entityGroup: EntityGroup) {
+    const entities = await Entity.query().where('entity_group_id', entityGroup.id)
+    entities.forEach(async (entity) => {
+      await drive.use('csv').delete(entity.meta['csv_location'] ?? '')
+      await drive.use('voice').delete(entity.file_location)
+      await entity.delete()
+    })
 
-  public async deleteEntityGroupAndEntitiesAndFiles(entityGroup: EntityGroup, user: User) {}
+    await drive.use('word').delete(entityGroup.result_location['word_location'] ?? '')
+  }
+
+  public async deleteEntityGroupAndEntitiesAndFiles(entityGroup: EntityGroup, user: User) {
+    await db.transaction(async (trx) => {
+      const lockedEntityGroup = await EntityGroup.query()
+        .where('id', entityGroup.id)
+        .forUpdate()
+        .firstOrFail()
+
+      // Delete department files
+      const departmentFiles = await DepartmentFile.query().where(
+        'entity_group_id',
+        lockedEntityGroup.id
+      )
+
+      departmentFiles.forEach(async (departmentFile) => {
+        await departmentFile.useTransaction(trx).delete()
+      })
+
+      // Delete entities and their associated files
+      const entities = await Entity.query().where('entity_group_id', lockedEntityGroup.id)
+
+      entities.forEach(async (entity) => {
+        await drive.use('csv').delete(entity.meta['csv_location'] ?? '')
+        await drive.use('voice').delete(entity.file_location)
+        await entity.useTransaction(trx).delete()
+      })
+
+      await drive.use(lockedEntityGroup.type).delete(lockedEntityGroup.file_location)
+
+      if (['pdf', 'image'].includes(lockedEntityGroup.type)) {
+        await drive.use('pdf').delete(lockedEntityGroup.result_location['pdf_location'] ?? '')
+      }
+
+      await drive.use('word').delete(lockedEntityGroup.result_location['word_location'] ?? '')
+
+      await lockedEntityGroup.useTransaction(trx).delete()
+
+      logger.info(`${user}`)
+    })
+  }
 }

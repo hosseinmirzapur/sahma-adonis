@@ -49,7 +49,7 @@ export default class EntityGroup extends BaseModel {
   declare slug: string
 
   @column()
-  declare result_location: any
+  declare result_location: Record<string, any>
 
   @column()
   declare file_location: string
