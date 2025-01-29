@@ -18,6 +18,9 @@ export default class LetterReply extends BaseModel {
   @column()
   declare meta: Record<string, any>
 
+  @column()
+  declare text: string
+
   @belongsTo(() => Letter)
   declare letter: BelongsTo<typeof Letter>
 

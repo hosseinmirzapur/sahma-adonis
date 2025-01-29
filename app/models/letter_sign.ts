@@ -15,6 +15,9 @@ export default class LetterSign extends BaseModel {
   declare updatedAt: DateTime
 
   @column()
+  declare signed_at: string | null
+
+  @column()
   declare letter_id: number
 
   @column()

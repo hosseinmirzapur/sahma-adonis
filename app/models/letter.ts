@@ -20,7 +20,7 @@ export default class Letter extends BaseModel {
   public static STATUS_SENT = 'SENT'
   public static STATUS_RECEIVED = 'RECEIVED'
   public static STATUS_REPLIED = 'REPLIED'
-  public static STATUS_ACHIEVED = 'ACHIEVED'
+  public static STATUS_ARCHIEVED = 'ARCHIEVED'
   public static STATUS_DELETED = 'DELETED'
   public static STATUS_DRAFT = 'DRAFT'
 
@@ -44,6 +44,24 @@ export default class Letter extends BaseModel {
 
   @column()
   declare priority: string
+
+  @column()
+  declare subject: string
+
+  @column()
+  declare description: string | null
+
+  @column.date()
+  declare due_date: DateTime | null
+
+  @column()
+  declare submitted_at: DateTime | null | string
+
+  @column()
+  declare letter_reference_type: string | null
+
+  @column()
+  declare category: string
 
   @belongsTo(() => User)
   declare user: BelongsTo<typeof User>

@@ -23,6 +23,12 @@ export default class LetterInbox extends BaseModel {
   @column()
   declare letter_id: number
 
+  @column()
+  declare refer_desccription: string | null
+
+  @column()
+  declare read_status: string
+
   @belongsTo(() => User, {
     foreignKey: 'user_id',
   })
